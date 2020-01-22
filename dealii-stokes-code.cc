@@ -2265,7 +2265,7 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
     timer.stop();
     pcout << "   Assemble System (RHS) timings:       " << timer.last_wall_time() << std::endl;
 
-    //solve();
+    solve();
 
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
