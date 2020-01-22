@@ -97,6 +97,9 @@ namespace Nsinker
 {
 using namespace dealii;
 
+class QuietException {};
+
+
 
 
 void average(std::vector<double> &values, const std::string averaging_type)
