@@ -1823,9 +1823,9 @@ void StokesProblem<dim>::correct_stokes_rhs()
   constraints.distribute(u0);
   u0.update_ghost_values();
 
-  FEEvaluation<dim,velocity_degree,velocity_degree+1,dim,double>
+  FEEvaluation<dim,2,3,dim,double>
       velocity (*stokes_matrix.get_matrix_free(), 0);
-  FEEvaluation<dim,velocity_degree-1,velocity_degree+1,1,double>
+  FEEvaluation<dim,1,3,1,double>
       pressure (*stokes_matrix.get_matrix_free(), 1);
 
   for (unsigned int cell=0; cell<stokes_matrix.get_matrix_free()->n_macro_cells(); ++cell)
@@ -2035,6 +2035,7 @@ void StokesProblem<dim>::solve()
   linearized_stokes_initial_guess.block (block_p) = 0;
   constraints.set_zero (linearized_stokes_initial_guess);
 
+
   double solver_tolerance = 0;
   {
     // (ab)use the distributed solution vector to temporarily put a residual in
@@ -2066,7 +2067,6 @@ void StokesProblem<dim>::solve()
     // Compute residual l2_norm
     stokes_matrix.vmult(solution_copy,initial_copy);
     solution_copy.sadd(-1,1,rhs_copy);
-    initial_nonlinear_residual = solution_copy.l2_norm();
 
     // Note: the residual is computed with a zero velocity, effectively computing
     // || B^T p - g ||, which we are going to use for our solver tolerance.
