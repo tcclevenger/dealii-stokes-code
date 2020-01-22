@@ -2106,12 +2106,10 @@ void StokesProblem<dim>::solve()
   ChangeVectorTypes::copy(solution_copy,distributed_stokes_solution);
   ChangeVectorTypes::copy(rhs_copy,distributed_stokes_rhs);
 
-  // create Solver controls for the cheap and expensive solver phase
   SolverControl solver_control_cheap (200,
                                       solver_tolerance, true);
 
   solver_control_cheap.enable_history_data();
-  solver_control_expensive.enable_history_data();
 
 
   const bool do_mass_solve = false;
@@ -2177,7 +2175,7 @@ void StokesProblem<dim>::solve()
                 preconditioner_cheap);
   timer.stop();
   const double solve_time = timer.last_wall_time();
-  unsigned int gmres_m = solver_control.last_step();
+  unsigned int gmres_m = solver_control_cheap.last_step();
   pcout << "   FGMRES Solve timings:              " << solve_time << "  (" << gmres_m << " iterations)"
         << std::endl;
 }
