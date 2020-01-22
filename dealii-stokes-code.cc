@@ -2261,6 +2261,7 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
     timer.restart();
     assemble_system();
     evaluate_viscosity();
+    compute_A_block_diagonals();
     correct_stokes_rhs();
     timer.stop();
     pcout << "   Assemble System (RHS) timings:       " << timer.last_wall_time() << std::endl;
