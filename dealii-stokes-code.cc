@@ -2398,7 +2398,7 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
   {
     // dof estimate:
 
-    long long start_dofs = 29*std::pow(8.0,refine_start);
+    long long start_dofs = 26*std::pow(8.0,refine_start);
     pcout << "estimate: " << std::endl;
 
     for (unsigned int i=0;i<n_cycles_global;++i)
