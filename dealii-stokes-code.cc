@@ -101,7 +101,6 @@ class QuietException {};
 
 
 
-
 void average(std::vector<double> &values, const std::string averaging_type)
 {
   const unsigned int n_q_points = values.size();
@@ -1192,27 +1191,53 @@ template <int dim>
 class Viscosity : public Function<dim>
 {
 public:
-  Viscosity () : Function<dim>() {}
+  Viscosity ();
   virtual double value (const Point<dim> &p,
                         const unsigned int component = 0) const;
   virtual void value_list (const std::vector<Point<dim> > &points,
                            std::vector<double>            &values,
                            const unsigned int              component = 0) const;
+
+private:
+  double dynamic_viscosity_ratio;
+  unsigned int n_sinkers;
+  std::vector<Point<3> > centers;
+  double delta;
+  double omega;
 };
+template <int dim>
+Viscosity<dim>::Viscosity()
+  :
+    dynamic_viscosity_ratio(1e4)
+  , n_sinkers(4)
+  , delta(200.0)
+  , omega(0.1)
+{
+  centers.resize(8);
+  centers[0] = Point<3>(2.4257829890e-01, 1.3469574514e-02, 3.8313885004e-01);
+  centers[1] = Point<3>(4.1465269048e-01, 6.7768972864e-02, 9.9312692973e-01);
+  centers[2] = Point<3>(4.8430804651e-01, 7.6533776604e-01, 3.1833815403e-02);
+  centers[3] = Point<3>(3.0935481671e-02, 9.3264044027e-01, 8.8787953411e-01);
+  centers[4] = Point<3>(5.9132973039e-01, 4.7877868473e-01, 8.3335433660e-01);
+  centers[5] = Point<3>(1.8633519681e-01, 7.3565270739e-01, 1.1505317181e-01);
+  centers[6] = Point<3>(6.9865863058e-01, 3.5560411138e-01, 6.3830000658e-01);
+  centers[7] = Point<3>(9.0821050755e-01, 2.9400041480e-01, 2.6497158886e-01);
+}
+
 template <int dim>
 double Viscosity<dim>::value (const Point<dim> &p,
                               const unsigned int /*component*/) const
 {
-//  double Chi = 1.0;
-//  for (unsigned int s=0; s<sinker.n_sinkers; ++s)
-//  {
-//    double dist = p.distance(sinker.centers[s]);
-//    double temp = 1-std::exp(-delta*
-//                             std::pow(std::max(0.0,dist-omega/2.0),2));
-//    Chi *= temp;
-//  }
-//  return (sinker.mu_max - sinker.mu_min)*(1-Chi) + sinker.mu_min;
-  return 1.0;
+  double Chi = 1.0;
+  for (unsigned int s=0; s<n_sinkers; ++s)
+  {
+    double dist = p.distance(centers[s]);
+    double temp = 1-std::exp(-delta*
+                             std::pow(std::max(0.0,dist-omega/2.0),2));
+    Chi *= temp;
+  }
+  const double sqrt_dynamic_viscosity_ratio = std::sqrt(dynamic_viscosity_ratio);
+  return (sqrt_dynamic_viscosity_ratio - 1/sqrt_dynamic_viscosity_ratio)*(1-Chi) + 1/sqrt_dynamic_viscosity_ratio;
 }
 template <int dim>
 void Viscosity<dim>::value_list (const std::vector<Point<dim> > &points,
@@ -1234,23 +1259,58 @@ template <int dim>
 class RightHandSide : public Function<dim>
 {
 public:
-  RightHandSide()
-    : Function<dim>(dim + 1)
-  {}
+  RightHandSide();
 
   virtual void vector_value(const Point<dim> &p,
                             Vector<double> &  value) const override;
+
+private:
+  double dynamic_viscosity_ratio;
+  unsigned int n_sinkers;
+  std::vector<Point<3> > centers;
+  double delta;
+  double omega;
+  double beta;
 };
 
+template <int dim>
+RightHandSide<dim>::RightHandSide()
+  :
+    n_sinkers(4)
+  , delta(200.0)
+  , omega(0.1)
+  , beta(10)
+{
+  centers.resize(8);
+  centers[0] = Point<3>(2.4257829890e-01, 1.3469574514e-02, 3.8313885004e-01);
+  centers[1] = Point<3>(4.1465269048e-01, 6.7768972864e-02, 9.9312692973e-01);
+  centers[2] = Point<3>(4.8430804651e-01, 7.6533776604e-01, 3.1833815403e-02);
+  centers[3] = Point<3>(3.0935481671e-02, 9.3264044027e-01, 8.8787953411e-01);
+  centers[4] = Point<3>(5.9132973039e-01, 4.7877868473e-01, 8.3335433660e-01);
+  centers[5] = Point<3>(1.8633519681e-01, 7.3565270739e-01, 1.1505317181e-01);
+  centers[6] = Point<3>(6.9865863058e-01, 3.5560411138e-01, 6.3830000658e-01);
+  centers[7] = Point<3>(9.0821050755e-01, 2.9400041480e-01, 2.6497158886e-01);
+}
 
 template <int dim>
 void RightHandSide<dim>::vector_value(const Point<dim> &p,
                                       Vector<double> &  values) const
 {
+  double Chi = 1.0;
+  for (unsigned int s=0; s<n_sinkers; ++s)
+  {
+    double dist = p.distance(centers[s]);
+    double temp = 1-std::exp(-delta*
+                             std::pow(std::max(0.0,dist-omega/2.0),2));
+    Chi *= temp;
+  }
+
   values[0] = 0.0;
   values[1] = 0.0;
-  values[2] = 1.0;
+  values[2] = beta*(1.0-Chi);
   values[3] = 0.0;
+
+  return;
 }
 
 
@@ -1265,6 +1325,8 @@ public:
            unsigned int n_cycles_adaptive);
 
 private:
+  double get_workload_imbalance();
+
   void make_grid(unsigned int ref);
   void setup_system();
   void assemble_system();
@@ -1381,9 +1443,43 @@ StokesProblem<dim>::StokesProblem(unsigned int velocity_degree)
 
 
 template <int dim>
+double StokesProblem<dim>::get_workload_imbalance ()
+{
+  unsigned int n_proc = Utilities::MPI::n_mpi_processes(mpi_communicator);
+  unsigned int n_global_levels = triangulation.n_global_levels();
+
+  unsigned long long int work_estimate = 0;
+  unsigned long long int total_cells_in_hierarchy = 0;
+
+  for (int lvl=n_global_levels-1; lvl>=0; --lvl)
+    {
+      unsigned long long int work_estimate_this_level;
+      unsigned long long int total_cells_on_lvl;
+      unsigned long long int n_owned_cells_on_lvl = 0;
+
+      for (const auto &cell: triangulation.cell_iterators_on_level(lvl))
+        if (cell->is_locally_owned_on_level())
+          n_owned_cells_on_lvl += 1;
+
+      work_estimate_this_level = dealii::Utilities::MPI::max(n_owned_cells_on_lvl,triangulation.get_communicator());
+
+      work_estimate += work_estimate_this_level;
+
+      total_cells_on_lvl = dealii::Utilities::MPI::sum(n_owned_cells_on_lvl,triangulation.get_communicator());
+
+      total_cells_in_hierarchy += total_cells_on_lvl;
+    }
+  double ideal_work = static_cast<double>(total_cells_in_hierarchy) / static_cast<double>(n_proc);
+  double workload_imbalance_ratio = work_estimate / ideal_work;
+
+  return workload_imbalance_ratio;
+}
+
+
+template <int dim>
 void StokesProblem<dim>::make_grid(unsigned int ref)
 {
-  GridGenerator::hyper_cube(triangulation, -0.5, 1.5);
+  GridGenerator::hyper_cube (triangulation, 0, 1);
   triangulation.refine_global(ref);
 }
 
@@ -1890,7 +1986,7 @@ void StokesProblem<dim>::solve()
 {
   Timer timer(mpi_communicator,true);
 
-  TimerOutput::Scope t(computing_timer, "solve() function");
+  TimerOutput::Scope t(computing_timer, "solve");
 
 
   // Below we define all the objects needed to build the GMG preconditioner:
@@ -2140,7 +2236,7 @@ void StokesProblem<dim>::solve()
 
       tmp_scr = tmp_dst;
     }
-    pcout << "   PrecVmult timings:       " << vmult_time/5.0 << std::endl;
+    pcout << "   PrecVmult timings:              " << vmult_time/5.0 << std::endl;
   }
 
   {
@@ -2159,7 +2255,7 @@ void StokesProblem<dim>::solve()
 
       tmp_scr = tmp_dst;
     }
-    pcout << "   MatVmult timings:       " << vmult_time/10.0 << std::endl;
+    pcout << "   MatVmult timings:               " << vmult_time/10.0 << std::endl;
   }
 
   PrimitiveVectorMemory<dealii::LinearAlgebra::distributed::BlockVector<double> > mem;
@@ -2176,8 +2272,14 @@ void StokesProblem<dim>::solve()
   timer.stop();
   const double solve_time = timer.last_wall_time();
   unsigned int gmres_m = solver_control_cheap.last_step();
-  pcout << "   FGMRES Solve timings:              " << solve_time << "  (" << gmres_m << " iterations)"
+  pcout << "   FGMRES Solve timings:           " << solve_time << "  (" << gmres_m << " iterations)"
         << std::endl;
+
+  solution_copy.update_ghost_values();
+  LA::MPI::BlockVector distributed_locally_relevant_solution(owned_partitioning,mpi_communicator);
+  ChangeVectorTypes::copy(distributed_locally_relevant_solution,solution_copy);
+  locally_relevant_solution.block(0) = distributed_locally_relevant_solution.block(0);
+  locally_relevant_solution.block(1) = distributed_locally_relevant_solution.block(1);
 }
 
 
@@ -2185,7 +2287,7 @@ void StokesProblem<dim>::solve()
 template <int dim>
 void StokesProblem<dim>::refine_grid(bool global)
 {
-  TimerOutput::Scope t(computing_timer, "6.refine");
+  TimerOutput::Scope t(computing_timer, "refine");
 
   if (global)
     triangulation.refine_global();
@@ -2203,6 +2305,76 @@ void StokesProblem<dim>::refine_grid(bool global)
           triangulation, estimated_error_per_cell, 0.1428, 0.0);
 
     triangulation.execute_coarsening_and_refinement();
+  }
+}
+
+template <int dim>
+void StokesProblem<dim>::output_results (const unsigned int cycle) const
+{
+  TimerOutput::Scope t(computing_timer, "output_results");
+
+  dealii::LinearAlgebra::distributed::BlockVector<double> solution(2);
+  stokes_matrix.initialize_dof_vector(solution);
+  ChangeVectorTypes::copy(solution,locally_relevant_solution);
+
+
+  solution.update_ghost_values();
+
+  std::vector<std::string> solution_names (dim, "velocity");
+  solution_names.push_back ("pressure");
+  std::vector<DataComponentInterpretation::DataComponentInterpretation>
+      data_component_interpretation
+      (dim, DataComponentInterpretation::component_is_part_of_vector);
+  data_component_interpretation
+      .push_back (DataComponentInterpretation::component_is_scalar);
+
+  DataOut<dim> data_out;
+  data_out.attach_dof_handler (dof_handler);
+  data_out.add_data_vector (solution,
+                            solution_names,
+                            DataOut<dim>::type_dof_data,
+                            data_component_interpretation);
+
+  Vector<double> subdomain (triangulation.n_active_cells());
+  for (unsigned int i=0; i<subdomain.size(); ++i)
+    subdomain(i) = triangulation.locally_owned_subdomain();
+  data_out.add_data_vector (subdomain, "subdomain");
+
+  Vector<double> visc_values (triangulation.n_active_cells());
+  {
+    Viscosity<dim> viscosity;
+    typename Triangulation<dim>::active_cell_iterator cell = triangulation.begin_active();
+    for (;cell!=triangulation.end();++cell)
+      if (cell->is_locally_owned())
+        visc_values(cell->active_cell_index()) = viscosity.value(cell->center());
+    data_out.add_data_vector (visc_values, "viscosity");
+  }
+  data_out.build_patches ();
+
+  const std::string filename = ("solution-" +
+                                Utilities::int_to_string (cycle, 2) +
+                                "." +
+                                Utilities::int_to_string
+                                (triangulation.locally_owned_subdomain(), 4));
+  std::ofstream output ((filename + ".vtu").c_str());
+  data_out.write_vtu (output);
+
+  if (Utilities::MPI::this_mpi_process(MPI_COMM_WORLD) == 0)
+  {
+    std::vector<std::string> filenames;
+    for (unsigned int i=0;
+         i<Utilities::MPI::n_mpi_processes(MPI_COMM_WORLD);
+         ++i)
+      filenames.push_back ("solution-" +
+                           Utilities::int_to_string (cycle, 2) +
+                           "." +
+                           Utilities::int_to_string (i, 4) +
+                           ".vtu");
+
+    std::ofstream master_output (("solution-" +
+                                  Utilities::int_to_string (cycle, 2) +
+                                  ".pvtu").c_str());
+    data_out.write_pvtu_record (master_output, filenames);
   }
 }
 
@@ -2256,7 +2428,7 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
     setup_system();
     timer.stop();
     pcout << std::endl
-          << "   Setup DoFs timings:                 " << timer.last_wall_time() << std::endl;
+          << "   Setup DoFs timings:             " << timer.last_wall_time() << std::endl;
 
     timer.restart();
     assemble_system();
@@ -2264,13 +2436,17 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
     compute_A_block_diagonals();
     correct_stokes_rhs();
     timer.stop();
-    pcout << "   Assemble System (RHS) timings:       " << timer.last_wall_time() << std::endl;
+    pcout << "   Assemble System (RHS) timings:  " << timer.last_wall_time() << std::endl;
 
     solve();
 
+    //output_results(cycle);
+
+    pcout << "   Workload Imbalance:             " << get_workload_imbalance() << std::endl;
+
     Utilities::System::MemoryStats mem;
     Utilities::System::get_memory_stats(mem);
-    pcout << "   VM Peak: " << Utilities::MPI::max(mem.VmPeak, MPI_COMM_WORLD) << std::endl;
+    pcout << "   VM Peak:                        " << Utilities::MPI::max(mem.VmPeak, MPI_COMM_WORLD) << std::endl;
 
     pcout << std::endl;
     computing_timer.print_summary();
