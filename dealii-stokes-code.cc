@@ -1452,23 +1452,23 @@ double StokesProblem<dim>::get_workload_imbalance ()
   unsigned long long int total_cells_in_hierarchy = 0;
 
   for (int lvl=n_global_levels-1; lvl>=0; --lvl)
-    {
-      unsigned long long int work_estimate_this_level;
-      unsigned long long int total_cells_on_lvl;
-      unsigned long long int n_owned_cells_on_lvl = 0;
+  {
+    unsigned long long int work_estimate_this_level;
+    unsigned long long int total_cells_on_lvl;
+    unsigned long long int n_owned_cells_on_lvl = 0;
 
-      for (const auto &cell: triangulation.cell_iterators_on_level(lvl))
-        if (cell->is_locally_owned_on_level())
-          n_owned_cells_on_lvl += 1;
+    for (const auto &cell: triangulation.cell_iterators_on_level(lvl))
+      if (cell->is_locally_owned_on_level())
+        n_owned_cells_on_lvl += 1;
 
-      work_estimate_this_level = dealii::Utilities::MPI::max(n_owned_cells_on_lvl,triangulation.get_communicator());
+    work_estimate_this_level = dealii::Utilities::MPI::max(n_owned_cells_on_lvl,triangulation.get_communicator());
 
-      work_estimate += work_estimate_this_level;
+    work_estimate += work_estimate_this_level;
 
-      total_cells_on_lvl = dealii::Utilities::MPI::sum(n_owned_cells_on_lvl,triangulation.get_communicator());
+    total_cells_on_lvl = dealii::Utilities::MPI::sum(n_owned_cells_on_lvl,triangulation.get_communicator());
 
-      total_cells_in_hierarchy += total_cells_on_lvl;
-    }
+    total_cells_in_hierarchy += total_cells_on_lvl;
+  }
   double ideal_work = static_cast<double>(total_cells_in_hierarchy) / static_cast<double>(n_proc);
   double workload_imbalance_ratio = work_estimate / ideal_work;
 
@@ -1497,9 +1497,8 @@ void StokesProblem<dim>::setup_system()
   DoFRenumbering::component_wise(dof_handler, stokes_sub_blocks);
 
   std::vector<types::global_dof_index> dofs_per_block(2);
-  DoFTools::count_dofs_per_block(dof_handler,
-                                 dofs_per_block,
-                                 stokes_sub_blocks);
+  dofs_per_block = DoFTools::count_dofs_per_block(dof_handler,
+                                                  stokes_sub_blocks);
 
   const types::global_dof_index n_u = dofs_per_block[0], n_p = dofs_per_block[1];
   pcout << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " ("
@@ -1625,7 +1624,7 @@ void StokesProblem<dim>::setup_system()
       std::vector<const DoFHandler<dim>*> stokes_dofs;
       stokes_dofs.push_back(&dof_handler_v);
       stokes_dofs.push_back(&dof_handler_p);
-      std::vector<const ConstraintMatrix *> stokes_constraints;
+      std::vector<const AffineConstraints<double> *> stokes_constraints;
       stokes_constraints.push_back(&constraints_v);
       stokes_constraints.push_back(&constraints_p);
 
@@ -1682,7 +1681,7 @@ void StokesProblem<dim>::setup_system()
       {
         IndexSet relevant_dofs;
         DoFTools::extract_locally_relevant_level_dofs(dof_handler_v, level, relevant_dofs);
-        ConstraintMatrix level_constraints;
+        AffineConstraints<double> level_constraints;
         level_constraints.reinit(relevant_dofs);
         level_constraints.add_lines(mg_constrained_dofs_A.get_boundary_indices(level));
         level_constraints.close();
@@ -1715,7 +1714,7 @@ void StokesProblem<dim>::setup_system()
       {
         IndexSet relevant_dofs;
         DoFTools::extract_locally_relevant_level_dofs(dof_handler_p, level, relevant_dofs);
-        ConstraintMatrix level_constraints;
+        AffineConstraints<double> level_constraints;
         level_constraints.reinit(relevant_dofs);
         level_constraints.close();
 
