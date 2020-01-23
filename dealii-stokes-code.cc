@@ -2301,7 +2301,7 @@ void StokesProblem<dim>::refine_grid(bool global)
     }
 
     parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
-          triangulation, estimated_error_per_cell, 0.1428, 0.0);
+          triangulation, estimated_error_per_cell, 0.1438, 0.0);
 
     triangulation.execute_coarsening_and_refinement();
   }
@@ -2397,7 +2397,7 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
   {
     // dof estimate:
 
-    long long start_dofs = 30.12*std::pow(8.0,refine_start);
+    long long start_dofs = 26.2*std::pow(8.0,refine_start);
     pcout << "estimate: " << std::endl;
 
     for (unsigned int i=0;i<n_cycles_global;++i)
