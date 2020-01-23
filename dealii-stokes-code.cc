@@ -2301,7 +2301,7 @@ void StokesProblem<dim>::refine_grid(bool global)
     }
 
     parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
-          triangulation, estimated_error_per_cell, 0.1838, 0.0);
+          triangulation, estimated_error_per_cell, 0.1738, 0.0);
 
     triangulation.execute_coarsening_and_refinement();
   }
