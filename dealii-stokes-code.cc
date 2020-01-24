@@ -343,6 +343,9 @@ BlockSchurGMGPreconditioner<ABlockMatrixType, StokesMatrixType, MassMatrixType, 
 vmult (dealii::LinearAlgebra::distributed::BlockVector<double>       &dst,
        const dealii::LinearAlgebra::distributed::BlockVector<double>  &src) const
 {
+  if(Utilities::MPI::this_mpi_process(src.block(0).get_mpi_communicator()) == 0)
+    std::cout << "vmult" << std::endl;
+
   dealii::LinearAlgebra::distributed::BlockVector<double> utmp(src);
   dealii::LinearAlgebra::distributed::BlockVector<double> ptmp(src);
 
@@ -805,9 +808,6 @@ MatrixFreeStokesOperators::StokesOperator<dim,degree_v,number>
 ::apply_add (dealii::LinearAlgebra::distributed::BlockVector<number> &dst,
              const dealii::LinearAlgebra::distributed::BlockVector<number> &src) const
 {
-  if(Utilities::MPI::this_mpi_process(src.block(0).get_mpi_communicator()) == 0)
-    std::cout << "vmult" << std::endl;
-
   MatrixFreeOperators::Base<dim, dealii::LinearAlgebra::distributed::BlockVector<number> >::
       data->cell_loop(&StokesOperator::local_apply, this, dst, src);
 }
