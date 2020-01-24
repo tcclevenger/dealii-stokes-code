@@ -805,6 +805,9 @@ MatrixFreeStokesOperators::StokesOperator<dim,degree_v,number>
 ::apply_add (dealii::LinearAlgebra::distributed::BlockVector<number> &dst,
              const dealii::LinearAlgebra::distributed::BlockVector<number> &src) const
 {
+  if(Utilities::MPI::this_mpi_process(src.block(0).get_mpi_communicator()) == 0)
+    std::cout << "vmult" << std::endl;
+
   MatrixFreeOperators::Base<dim, dealii::LinearAlgebra::distributed::BlockVector<number> >::
       data->cell_loop(&StokesOperator::local_apply, this, dst, src);
 }
@@ -1838,6 +1841,7 @@ void StokesProblem<dim>::evaluate_viscosity ()
         std::vector<double> visc_vals(fe_values.get_quadrature_points().size());
         viscosity_function.value_list(fe_values.get_quadrature_points(),
                                       visc_vals);
+
 
         average(visc_vals,"harmonic");
 
