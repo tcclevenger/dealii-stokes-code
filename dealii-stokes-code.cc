@@ -24,11 +24,10 @@
 
 #include <deal.II/lac/generic_linear_algebra.h>
 
-/* #define FORCE_USE_OF_TRILINOS */
-
 namespace LA
 {
-using namespace dealii::LinearAlgebraTrilinos;
+// Removing Trilinos
+//using namespace dealii::LinearAlgebraTrilinos;
 } // namespace LA
 
 #include <deal.II/lac/vector.h>
@@ -356,12 +355,6 @@ vmult (dealii::LinearAlgebra::distributed::BlockVector<double>       &dst,
     SolverControl solver_control(100, src.block(1).l2_norm() * S_block_tolerance,true);
 
     SolverCG<dealii::LinearAlgebra::distributed::Vector<double> > solver(solver_control);
-    // Trilinos reports a breakdown
-    // in case src=dst=0, even
-    // though it should return
-    // convergence without
-    // iterating. We simply skip
-    // solving in this case.
     if (src.block(1).l2_norm() > 1e-50)
     {
       try
@@ -1332,10 +1325,8 @@ private:
 
   void make_grid(unsigned int ref);
   void setup_system();
-  void assemble_system();
-
   void evaluate_viscosity();
-  void correct_stokes_rhs();
+  void assemble_stokes_rhs();
   void compute_A_block_diagonals();
 
 
@@ -1350,13 +1341,11 @@ private:
   parallel::distributed::Triangulation<dim> triangulation;
   DoFHandler<dim>                           dof_handler;
 
-  std::vector<IndexSet> owned_partitioning;
-  std::vector<IndexSet> relevant_partitioning;
-
   AffineConstraints<double> constraints;
 
-  LA::MPI::BlockVector       locally_relevant_solution;
-  LA::MPI::BlockVector       system_rhs;
+
+  dealii::LinearAlgebra::distributed::BlockVector<double> locally_relevant_solution;
+  dealii::LinearAlgebra::distributed::BlockVector<double> system_rhs;
 
   ConditionalOStream pcout;
   TimerOutput        computing_timer;
@@ -1514,17 +1503,9 @@ void StokesProblem<dim>::setup_system()
   pcout << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " ("
         << n_u << '+' << n_p << ')' << std::endl;
 
-  owned_partitioning.resize(2);
-  owned_partitioning[0] = dof_handler.locally_owned_dofs().get_view(0, n_u);
-  owned_partitioning[1] =
-      dof_handler.locally_owned_dofs().get_view(n_u, n_u + n_p);
-
   {
     IndexSet locally_relevant_dofs;
     DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
-    relevant_partitioning.resize(2);
-    relevant_partitioning[0] = locally_relevant_dofs.get_view(0, n_u);
-    relevant_partitioning[1] = locally_relevant_dofs.get_view(n_u, n_u + n_p);
 
     constraints.reinit(locally_relevant_dofs);
 
@@ -1538,11 +1519,6 @@ void StokesProblem<dim>::setup_system()
                                              fe.component_mask(velocities));
     constraints.close();
   }
-
-  locally_relevant_solution.reinit(owned_partitioning,
-                                   relevant_partitioning,
-                                   mpi_communicator);
-  system_rhs.reinit(owned_partitioning, mpi_communicator);
 
 
   // Setup active DoFs
@@ -1645,6 +1621,11 @@ void StokesProblem<dim>::setup_system()
       stokes_matrix.clear();
       stokes_matrix.initialize(stokes_mf_storage);
 
+      system_rhs.reinit(2);
+      locally_relevant_solution.reinit(2);
+
+      stokes_matrix.initialize_dof_vector(system_rhs);
+      stokes_matrix.initialize_dof_vector(locally_relevant_solution);
     }
 
     // ABlock matrix
@@ -1765,61 +1746,6 @@ void StokesProblem<dim>::setup_system()
 
 
 template <int dim>
-void StokesProblem<dim>::assemble_system()
-{
-  TimerOutput::Scope t(computing_timer, "assembly");
-
-  system_rhs            = 0;
-
-  const QGauss<dim> quadrature_formula(velocity_degree + 1);
-
-  FEValues<dim> fe_values(fe,
-                          quadrature_formula,
-                          update_values | update_gradients |
-                          update_quadrature_points | update_JxW_values);
-
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-  const unsigned int n_q_points    = quadrature_formula.size();
-
-  Vector<double>     cell_rhs(dofs_per_cell);
-
-  const RightHandSide<dim>    right_hand_side;
-  std::vector<Vector<double>> rhs_values(n_q_points, Vector<double>(dim + 1));
-
-  std::vector<types::global_dof_index> local_dof_indices(dofs_per_cell);
-
-  for (const auto &cell : dof_handler.active_cell_iterators())
-    if (cell->is_locally_owned())
-    {
-      cell_rhs     = 0;
-
-      fe_values.reinit(cell);
-      right_hand_side.vector_value_list(fe_values.get_quadrature_points(),
-                                        rhs_values);
-      for (unsigned int q = 0; q < n_q_points; ++q)
-      {
-        for (unsigned int i = 0; i < dofs_per_cell; ++i)
-        {
-          const unsigned int component_i =
-              fe.system_to_component_index(i).first;
-          cell_rhs(i) += fe_values.shape_value(i, q) *
-              rhs_values[q](component_i) * fe_values.JxW(q);
-        }
-      }
-
-
-      cell->get_dof_indices(local_dof_indices);
-      constraints.distribute_local_to_global(cell_rhs,
-                                             local_dof_indices,
-                                             system_rhs);
-    }
-
-  system_rhs.compress(VectorOperation::add);
-}
-
-
-
-template <int dim>
 void StokesProblem<dim>::evaluate_viscosity ()
 {
   TimerOutput::Scope t(computing_timer, "evaluate_viscosity");
@@ -1887,7 +1813,7 @@ void StokesProblem<dim>::evaluate_viscosity ()
   level_coef_dof_vec = 0.;
   level_coef_dof_vec.resize(0,n_levels-1);
 
-  MGTransferMatrixFree<dim,double> transfer(mg_constrained_dofs_A);
+  MGTransferMatrixFree<dim,double> transfer;
   transfer.build(dof_handler_projection);
   transfer.interpolate_to_mg(dof_handler_projection,
                              level_coef_dof_vec,
@@ -1910,22 +1836,19 @@ void StokesProblem<dim>::evaluate_viscosity ()
 }
 
 
+
 template <int dim>
-void StokesProblem<dim>::correct_stokes_rhs()
+void StokesProblem<dim>::assemble_stokes_rhs()
 {
   TimerOutput::Scope t(computing_timer, "correct_stokes_rhs");
 
-  dealii::LinearAlgebra::distributed::BlockVector<double> rhs_correction(2);
+  system_rhs = 0.;
+
   dealii::LinearAlgebra::distributed::BlockVector<double> u0(2);
-
-  stokes_matrix.initialize_dof_vector(rhs_correction);
   stokes_matrix.initialize_dof_vector(u0);
-
-  rhs_correction.collect_sizes();
   u0.collect_sizes();
 
   u0 = 0;
-  rhs_correction = 0;
   constraints.distribute(u0);
   u0.update_ghost_values();
 
@@ -1933,6 +1856,8 @@ void StokesProblem<dim>::correct_stokes_rhs()
       velocity (*stokes_matrix.get_matrix_free(), 0);
   FEEvaluation<dim,1,3,1,double>
       pressure (*stokes_matrix.get_matrix_free(), 1);
+
+  const RightHandSide<dim>    right_hand_side;
 
   for (unsigned int cell=0; cell<stokes_matrix.get_matrix_free()->n_macro_cells(); ++cell)
   {
@@ -1947,31 +1872,50 @@ void StokesProblem<dim>::correct_stokes_rhs()
 
     for (unsigned int q=0; q<velocity.n_q_points; ++q)
     {
+      // Submit symmetric gradient
       SymmetricTensor<2,dim,VectorizedArray<double>> sym_grad_u =
           velocity.get_symmetric_gradient (q);
       VectorizedArray<double> pres = pressure.get_value(q);
       VectorizedArray<double> div = -trace(sym_grad_u);
-      pressure.submit_value   (-1.0*1.0*div, q);
-
       sym_grad_u *= cell_viscosity_x_2;
-
-      for (unsigned int d=0; d<dim; ++d)
-        sym_grad_u[d][d] -= 1.0*pres;
-
       velocity.submit_symmetric_gradient(-1.0*sym_grad_u, q);
+
+      // Subtract p*I
+      for (unsigned int d=0; d<dim; ++d)
+          sym_grad_u[d][d] -= 1.0*pres;
+
+      // Submit RHS value
+      Tensor<1,dim,VectorizedArray<double> > rhs_u;
+      for (unsigned int d=0; d<dim; ++d)
+          rhs_u[d] = make_vectorized_array<double> (0.0);
+
+      VectorizedArray<double> rhs_p = make_vectorized_array<double> (1.0);
+      for (unsigned int i=0; i<VectorizedArray<double>::n_array_elements; ++i)
+      {
+          Point<dim> p;
+          for (unsigned int d=0; d<dim; ++d)
+          p(d)=velocity.quadrature_point(q)(d)[i];
+
+          Vector<double> rhs_temp(dim+1);
+          right_hand_side.vector_value(p,rhs_temp);
+          for (unsigned int d=0; d<dim; ++d)
+              rhs_u[d][i] = rhs_temp(d);
+          rhs_p[i] = rhs_temp(dim);
+      }
+
+      velocity.submit_value(rhs_u, q);
+      pressure.submit_value(rhs_p - div, q);
     }
 
-    velocity.integrate (false,true);
-    velocity.distribute_local_to_global (rhs_correction.block(0));
+    velocity.integrate (true,true);
+    velocity.distribute_local_to_global (system_rhs.block(0));
     pressure.integrate (true,false);
-    pressure.distribute_local_to_global (rhs_correction.block(1));
+    pressure.distribute_local_to_global (system_rhs.block(1));
   }
-  rhs_correction.compress(VectorOperation::add);
 
-  LA::MPI::BlockVector stokes_rhs_correction (owned_partitioning, mpi_communicator);
-  ChangeVectorTypes::copy(stokes_rhs_correction,rhs_correction);
-  system_rhs.block(0) += stokes_rhs_correction.block(0);
-  system_rhs.block(1) += stokes_rhs_correction.block(1);
+  system_rhs.compress(VectorOperation::add);
+
+  pcout << "RHS: " << system_rhs.l2_norm() << std::endl;
 }
 
 template <int dim>
@@ -2111,131 +2055,45 @@ void StokesProblem<dim>::solve()
   APreconditioner prec_S(dof_handler_p, mg_mass, mg_transfer_mass);
 
 
-  // Many parts of the solver depend on the block layout (velocity = 0,
-  // pressure = 1). For example the linearized_stokes_initial_guess vector or the StokesBlock matrix
-  // wrapper. Let us make sure that this holds (and shorten their names):
-  const unsigned int block_vel = 0;
-  const unsigned int block_p = 1;
 
-  LA::MPI::BlockVector distributed_stokes_solution (owned_partitioning,
-                                                    mpi_communicator);
-  // extract Stokes parts of rhs vector
-  LA::MPI::BlockVector distributed_stokes_rhs(owned_partitioning,
-                                              mpi_communicator);
-
-  distributed_stokes_rhs.block(block_vel) = system_rhs.block(block_vel);
-  distributed_stokes_rhs.block(block_p) = system_rhs.block(block_p);
-
-  // create a completely distributed vector that will be used for
-  // the scaled and denormalized solution and later used as a
-  // starting guess for the linear solver
-  LA::MPI::BlockVector linearized_stokes_initial_guess (owned_partitioning,
-                                                        mpi_communicator);
-
-  // copy the velocity and pressure from current_linearization_point into
-  // the vector linearized_stokes_initial_guess. We need to do the copy because
-  // linearized_stokes_variables has a different
-  // layout than current_linearization_point, which also contains all the
-  // other solution variables.
-  linearized_stokes_initial_guess.block (block_vel) = 0;
-  linearized_stokes_initial_guess.block (block_p) = 0;
-  constraints.set_zero (linearized_stokes_initial_guess);
-
-
-  double solver_tolerance = 0;
-  {
-    // (ab)use the distributed solution vector to temporarily put a residual in
-    // (we don't care about the residual vector -- all we care about is the
-    // value (number) of the initial residual). The initial residual is returned
-    // to the caller (for nonlinear computations). This value is computed before
-    // the solve because we want to compute || A^{k+1} U^k - F^{k+1} ||, which is
-    // the nonlinear residual. Because the place where the nonlinear residual is
-    // checked against the nonlinear tolerance comes after the solve, the system
-    // is solved one time too many in the case of a nonlinear Picard solver.
-
-    // We must copy between Trilinos/dealii vector types
-    dealii::LinearAlgebra::distributed::BlockVector<double> solution_copy(2);
-    dealii::LinearAlgebra::distributed::BlockVector<double> initial_copy(2);
-    dealii::LinearAlgebra::distributed::BlockVector<double> rhs_copy(2);
-
+  // Initial solution / solver setup
+    dealii::LinearAlgebra::distributed::BlockVector<double> solution_copy (2);
     stokes_matrix.initialize_dof_vector(solution_copy);
-    stokes_matrix.initialize_dof_vector(initial_copy);
-    stokes_matrix.initialize_dof_vector(rhs_copy);
+    solution_copy = 0;
+    constraints.set_zero (solution_copy);
 
-    solution_copy.collect_sizes();
-    initial_copy.collect_sizes();
-    rhs_copy.collect_sizes();
+    double solver_tolerance = 0;
+    {
+      stokes_matrix.vmult(locally_relevant_solution,solution_copy);
+      locally_relevant_solution.block(0).sadd(-1,1,system_rhs.block(0));
 
-    ChangeVectorTypes::copy(solution_copy,distributed_stokes_solution);
-    ChangeVectorTypes::copy(initial_copy,linearized_stokes_initial_guess);
-    ChangeVectorTypes::copy(rhs_copy,distributed_stokes_rhs);
+      const double residual_u = locally_relevant_solution.block(0).l2_norm();
+      const double residual_p = system_rhs.block(1).l2_norm();
 
-    // Compute residual l2_norm
-    stokes_matrix.vmult(solution_copy,initial_copy);
-    solution_copy.sadd(-1,1,rhs_copy);
-
-    // Note: the residual is computed with a zero velocity, effectively computing
-    // || B^T p - g ||, which we are going to use for our solver tolerance.
-    // We do not use the current velocity for the initial residual because
-    // this would not decrease the number of iterations if we had a better
-    // initial guess (say using a smaller timestep). But we need to use
-    // the pressure instead of only using the norm of the rhs, because we
-    // are only interested in the part of the rhs not balanced by the static
-    // pressure (the current pressure is a good approximation for the static
-    // pressure).
-    initial_copy.block(0) = 0.;
-    stokes_matrix.vmult(solution_copy,initial_copy);
-    solution_copy.block(0).sadd(-1,1,rhs_copy.block(0));
-
-    const double residual_u = solution_copy.block(0).l2_norm();
-
-    const double residual_p = rhs_copy.block(1).l2_norm();
-
-    solver_tolerance = stokes_tol *
-        std::sqrt(residual_u*residual_u+residual_p*residual_p);
-  }
-
-  // Now overwrite the solution vector again with the current best guess
-  // to solve the linear system
-  distributed_stokes_solution = linearized_stokes_initial_guess;
-
-  // Again, copy solution and rhs vectors to solve with matrix-free operators
-  dealii::LinearAlgebra::distributed::BlockVector<double> solution_copy(2);
-  dealii::LinearAlgebra::distributed::BlockVector<double> rhs_copy(2);
-
-  stokes_matrix.initialize_dof_vector(solution_copy);
-  stokes_matrix.initialize_dof_vector(rhs_copy);
-
-  solution_copy.collect_sizes();
-  rhs_copy.collect_sizes();
-
-  ChangeVectorTypes::copy(solution_copy,distributed_stokes_solution);
-  ChangeVectorTypes::copy(rhs_copy,distributed_stokes_rhs);
+      solver_tolerance = stokes_tol *
+          std::sqrt(residual_u*residual_u+residual_p*residual_p);
+    }
+    locally_relevant_solution = 0;
 
   const int my_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
   if (my_rank == 0)
     deallog.depth_console(5);
   SolverControl solver_control_cheap (100,
                                       solver_tolerance, true);
-
   solver_control_cheap.enable_history_data();
-
-
-  const bool do_mass_solve = false;
-
 
   // create a cheap preconditioner that consists of only a single V-cycle
   const BlockSchurGMGPreconditioner<ABlockMatrixType, StokesMatrixType, MassMatrixType, MassPreconditioner, APreconditioner>
       preconditioner_cheap (stokes_matrix, velocity_matrix, mass_matrix,
                             prec_S, prec_A,
-                            do_mass_solve,
-                            false,
+                            false/*do_mass_solve*/,
+                            false/*do_A_solver*/,
                             A_tol,
                             mass_tol);
 
   {
-    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_dst = solution_copy;
-    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_scr = rhs_copy;
+    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_dst = locally_relevant_solution;
+    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_scr = system_rhs;
     preconditioner_cheap.vmult(tmp_dst, tmp_scr);
     tmp_scr = tmp_dst;
 
@@ -2253,8 +2111,8 @@ void StokesProblem<dim>::solve()
   }
 
   {
-    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_dst = solution_copy;
-    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_scr = rhs_copy;
+    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_dst = locally_relevant_solution;
+    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_scr = system_rhs;
     stokes_matrix.vmult(tmp_dst, tmp_scr);
     tmp_scr = tmp_dst;
 
@@ -2279,8 +2137,8 @@ void StokesProblem<dim>::solve()
 
   timer.restart();
   solver.solve (stokes_matrix,
-                solution_copy,
-                rhs_copy,
+                locally_relevant_solution,
+                system_rhs,
                 preconditioner_cheap);
   timer.stop();
   const double solve_time = timer.last_wall_time();
@@ -2288,11 +2146,8 @@ void StokesProblem<dim>::solve()
   pcout << "   FGMRES Solve timings:           " << solve_time << "  (" << gmres_m << " iterations)"
         << std::endl;
 
-  solution_copy.update_ghost_values();
-  LA::MPI::BlockVector distributed_locally_relevant_solution(owned_partitioning,mpi_communicator);
-  ChangeVectorTypes::copy(distributed_locally_relevant_solution,solution_copy);
-  locally_relevant_solution.block(0) = distributed_locally_relevant_solution.block(0);
-  locally_relevant_solution.block(1) = distributed_locally_relevant_solution.block(1);
+  constraints.distribute(locally_relevant_solution);
+  locally_relevant_solution.update_ghost_values();
 }
 
 
@@ -2359,12 +2214,7 @@ void StokesProblem<dim>::output_results (const unsigned int cycle)
 {
   TimerOutput::Scope t(computing_timer, "output_results");
 
-  dealii::LinearAlgebra::distributed::BlockVector<double> solution(2);
-  stokes_matrix.initialize_dof_vector(solution);
-  ChangeVectorTypes::copy(solution,locally_relevant_solution);
-
-
-  solution.update_ghost_values();
+  locally_relevant_solution.update_ghost_values();
 
   std::vector<std::string> solution_names (dim, "velocity");
   solution_names.push_back ("pressure");
@@ -2376,7 +2226,7 @@ void StokesProblem<dim>::output_results (const unsigned int cycle)
 
   DataOut<dim> data_out;
   data_out.attach_dof_handler (dof_handler);
-  data_out.add_data_vector (solution,
+  data_out.add_data_vector (locally_relevant_solution,
                             solution_names,
                             DataOut<dim>::type_dof_data,
                             data_component_interpretation);
@@ -2477,10 +2327,9 @@ void StokesProblem<dim>::run(unsigned int refine_start, unsigned int n_cycles_gl
           << "   Setup DoFs timings:             " << timer.last_wall_time() << std::endl;
 
     timer.restart();
-    assemble_system();
     evaluate_viscosity();
     compute_A_block_diagonals();
-    correct_stokes_rhs();
+    assemble_stokes_rhs();
     timer.stop();
     pcout << "   Assemble System (RHS) timings:  " << timer.last_wall_time() << std::endl;
 
