@@ -2164,6 +2164,27 @@ void StokesProblem<dim>::refine_grid(bool global)
     }
     if (true)
     {
+        std::vector<IndexSet> owned_partitioning(2);
+        std::vector<IndexSet> relevant_partitioning(2);
+        owned_partitioning[0] =
+                dof_handler.locally_owned_dofs().get_view(0, dof_handler_v.n_dofs());
+        owned_partitioning[1] =
+                dof_handler.locally_owned_dofs().get_view(dof_handler_v.n_dofs(),
+                                                          dof_handler_v.n_dofs()+dof_handler_p.n_dofs());
+        IndexSet locally_relevant_dofs;
+        DoFTools::extract_locally_relevant_dofs (dof_handler,
+                                                 locally_relevant_dofs);
+        relevant_partitioning[0] =
+                locally_relevant_dofs.get_view(0, dof_handler_v.n_dofs());
+        relevant_partitioning[1] =
+                locally_relevant_dofs.get_view(dof_handler_v.n_dofs(),
+                                               dof_handler_v.n_dofs()+dof_handler_p.n_dofs());
+        dealii::LinearAlgebra::distributed::BlockVector<double> solution(owned_partitioning,
+                                                                         relevant_partitioning,
+                                                                         MPI_COMM_WORLD);
+        locally_relevant_solution.update_ghost_values();
+        solution = locally_relevant_solution;
+
         // refine based on velocity
         Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
         FEValuesExtractors::Vector velocities(0);
@@ -2171,7 +2192,7 @@ void StokesProblem<dim>::refine_grid(bool global)
                                             dof_handler,
                                             QGauss<dim-1>(3),
                                             std::map<types::boundary_id,const Function<dim>*>(),
-                                            locally_relevant_solution,
+                                            solution,
                                             estimated_error_per_cell,
                                             fe.component_mask(velocities),
                                             nullptr,
