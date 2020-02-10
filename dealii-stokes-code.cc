@@ -1341,7 +1341,7 @@ private:
 
   void solve();
   void refine_grid(bool global);
-  void output_results(const unsigned int cycle) const;
+  void output_results(const unsigned int cycle);
 
   unsigned int velocity_degree;
   MPI_Comm     mpi_communicator;
@@ -1499,9 +1499,16 @@ void StokesProblem<dim>::setup_system()
   DoFRenumbering::hierarchical(dof_handler);
   DoFRenumbering::component_wise(dof_handler, stokes_sub_blocks);
 
+
+#if 1
   std::vector<types::global_dof_index> dofs_per_block(2);
-  dofs_per_block = DoFTools::count_dofs_per_block(dof_handler,
+  DoFTools::count_dofs_per_block(dof_handler, dofs_per_block, stokes_sub_blocks);
+#else
+  std::vector<types::global_dof_index> dofs_per_block
+      =
+    DoFTools::count_dofs_per_block(dof_handler,
                                                   stokes_sub_blocks);
+#endif
 
   const types::global_dof_index n_u = dofs_per_block[0], n_p = dofs_per_block[1];
   pcout << "   Number of degrees of freedom: " << dof_handler.n_dofs() << " ("
@@ -2205,7 +2212,10 @@ void StokesProblem<dim>::solve()
   ChangeVectorTypes::copy(solution_copy,distributed_stokes_solution);
   ChangeVectorTypes::copy(rhs_copy,distributed_stokes_rhs);
 
-  SolverControl solver_control_cheap (200,
+  const int my_rank = Utilities::MPI::this_mpi_process(MPI_COMM_WORLD);
+  if (my_rank == 0)
+    deallog.depth_console(5);
+  SolverControl solver_control_cheap (100,
                                       solver_tolerance, true);
 
   solver_control_cheap.enable_history_data();
@@ -2293,9 +2303,42 @@ void StokesProblem<dim>::refine_grid(bool global)
   TimerOutput::Scope t(computing_timer, "refine");
 
   if (global)
-    triangulation.refine_global();
+    {
+      triangulation.refine_global();
+      return;
+    }
+  if (true)
+    {
+      // refine based on velocity
+      Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
+      FEValuesExtractors::Vector velocities(0);
+      KellyErrorEstimator<dim>::estimate (//this->get_mapping(),
+                                          dof_handler,
+                                          QGauss<dim-1>(3),
+                                          std::map<types::boundary_id,const Function<dim>*>(),
+                                          locally_relevant_solution,
+                                          estimated_error_per_cell,
+                                          fe.component_mask(velocities),
+                                          nullptr,
+                                          0,
+                                          triangulation.locally_owned_subdomain());
+
+
+//      parallel::distributed::GridRefinement::refine_and_coarsen_fixed_fraction(
+//            triangulation, estimated_error_per_cell, 0.104, 0.0);
+      parallel::distributed::GridRefinement::
+          refine_and_coarsen_fixed_number   (triangulation,
+                                             estimated_error_per_cell,
+                                             0.104,
+                                             0.0);
+
+
+      triangulation.execute_coarsening_and_refinement();
+
+    }
   else
-  {
+    {
+      // refine into a corner
     Vector<float> estimated_error_per_cell(triangulation.n_active_cells());
     for (auto & cell: triangulation.active_cell_iterators())
     {
@@ -2312,7 +2355,7 @@ void StokesProblem<dim>::refine_grid(bool global)
 }
 
 template <int dim>
-void StokesProblem<dim>::output_results (const unsigned int cycle) const
+void StokesProblem<dim>::output_results (const unsigned int cycle)
 {
   TimerOutput::Scope t(computing_timer, "output_results");
 
