@@ -291,6 +291,8 @@ private:
     const bool do_solve_A;
     mutable unsigned int n_iterations_A_;
     mutable unsigned int n_iterations_S_;
+    mutable dealii::LinearAlgebra::distributed::BlockVector<double> utmp;
+    mutable dealii::LinearAlgebra::distributed::BlockVector<double> ptmp;
     const double A_block_tolerance;
     const double S_block_tolerance;
 };
@@ -345,8 +347,11 @@ vmult (dealii::LinearAlgebra::distributed::BlockVector<double>       &dst,
     if(Utilities::MPI::this_mpi_process(src.block(0).get_mpi_communicator()) == 0)
         std::cout << "vmult" << std::endl;
 
-    dealii::LinearAlgebra::distributed::BlockVector<double> utmp(src);
-    dealii::LinearAlgebra::distributed::BlockVector<double> ptmp(src);
+    if (utmp.size()==0)
+      {
+	utmp.reinit(src);
+	ptmp.reinit(src);
+      }
 
     if (do_mass_solve)
     {
@@ -2130,9 +2135,13 @@ void StokesProblem<dim>::solve()
     }
 
     PrimitiveVectorMemory<dealii::LinearAlgebra::distributed::BlockVector<double> > mem;
-    SolverFGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >
+    /*    SolverFGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >
             solver(solver_control_cheap, mem,
                    SolverFGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >::
+                   AdditionalData(50));*/
+    SolverGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >
+            solver(solver_control_cheap, mem,
+                   SolverGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >::
                    AdditionalData(50));
 
     timer.restart();
