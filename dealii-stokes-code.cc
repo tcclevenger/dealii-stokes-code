@@ -2142,7 +2142,7 @@ void StokesProblem<dim>::solve()
     SolverGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >
             solver(solver_control_cheap, mem,
                    SolverGMRES<dealii::LinearAlgebra::distributed::BlockVector<double> >::
-                   AdditionalData(50));
+                   AdditionalData(48,true));
 
     timer.restart();
     solver.solve (stokes_matrix,
