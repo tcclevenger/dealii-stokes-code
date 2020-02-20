@@ -92,6 +92,28 @@ namespace LA
 #include <fstream>
 #include <iostream>
 
+
+
+
+
+// This block enables compilation of the code with and without LIKWID in place
+
+//#define LIKWID_PERFMON
+
+#ifdef LIKWID_PERFMON
+#include <likwid.h>
+#else
+#define LIKWID_MARKER_INIT
+#define LIKWID_MARKER_THREADINIT
+#define LIKWID_MARKER_SWITCH
+#define LIKWID_MARKER_REGISTER(regionTag)
+#define LIKWID_MARKER_START(regionTag)
+#define LIKWID_MARKER_STOP(regionTag)
+#define LIKWID_MARKER_CLOSE
+#define LIKWID_MARKER_GET(regionTag, nevents, events, time, count)
+#endif
+
+
 namespace Nsinker
 {
 using namespace dealii;
@@ -2095,6 +2117,28 @@ void StokesProblem<dim>::solve()
                                   false/*do_A_solver*/,
                                   A_tol,
                                   mass_tol);
+
+
+
+    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_dst = locally_relevant_solution;
+    dealii::LinearAlgebra::distributed::BlockVector<double> tmp_scr = system_rhs;
+
+    LIKWID_MARKER_INIT;
+
+    LIKWID_MARKER_START("mat-vmult");
+    stokes_matrix.vmult(tmp_dst, tmp_scr);
+    LIKWID_MARKER_STOP("mat-vmult");
+
+    tmp_scr = system_rhs;
+
+    LIKWID_MARKER_START("prec-vmult");
+    preconditioner_cheap.vmult(tmp_dst, tmp_scr);
+    LIKWID_MARKER_STOP("prec-vmult");
+
+    LIKWID_MARKER_CLOSE;
+
+    return;
+
 
     {
         dealii::LinearAlgebra::distributed::BlockVector<double> tmp_dst = locally_relevant_solution;
